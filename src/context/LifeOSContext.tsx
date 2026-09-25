@@ -26,6 +26,7 @@ import { documentService } from '../api/services/documentService';
 import { planService } from '../api/services/planService';
 import { actionService } from '../api/services/actionService';
 import { notificationService } from '../api/services/notificationService';
+import { agentService } from '../api/services/agentService';
 import { agentWebSocket } from '../services/websocket';
 
 export type ToastType = 'success' | 'warning' | 'error' | 'info';
@@ -63,6 +64,7 @@ interface LifeOSContextType {
   approveAction: (actionId: string) => Promise<void>;
   rejectAction: (actionId: string) => Promise<void>;
   markNotificationRead: (notifId: string) => Promise<void>;
+  refreshAgents: () => Promise<void>;
   recentAgentActivity: string[];
 }
 
@@ -330,6 +332,16 @@ export const LifeOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
+  const refreshAgents = async () => {
+    try {
+      const fleet = await agentService.getAgents();
+      setAgents(fleet);
+      showToast('Agent fleet status synchronized', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to refresh agents', 'error');
+    }
+  };
+
   return (
     <LifeOSContext.Provider
       value={{
@@ -359,6 +371,7 @@ export const LifeOSProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         approveAction,
         rejectAction,
         markNotificationRead,
+        refreshAgents,
         recentAgentActivity,
       }}
     >
