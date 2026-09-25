@@ -28,3 +28,8 @@ dist-ssr/
 .env
 .env.*
 !.env.example
+
+# Test artifacts and screenshots
+*.png
+screenshot_*.png
+

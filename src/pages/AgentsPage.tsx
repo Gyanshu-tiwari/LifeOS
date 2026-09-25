@@ -22,7 +22,7 @@ import { LifeOSButton } from '../components/ui/LifeOSButton';
 import { LifeOSBadge } from '../components/ui/LifeOSBadge';
 
 export const AgentsPage: React.FC = () => {
-  const { agents, showToast } = useLifeOS();
+  const { agents, refreshAgents } = useLifeOS();
   const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
 
   const getAgentIcon = (type: AgentType) => {
@@ -111,7 +111,7 @@ export const AgentsPage: React.FC = () => {
             7 Agents Online & Synchronized
           </LifeOSBadge>
           <LifeOSButton
-            onClick={() => showToast('Dispatched health ping to all 7 agents: 100% OK', 'success')}
+            onClick={refreshAgents}
             variant="outline"
             size="sm"
             leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
