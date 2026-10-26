@@ -10,7 +10,7 @@ import uuid
 from typing import Annotated
 
 import firebase_admin
-from firebase_admin import auth as firebase_auth, credentials
+from firebase_admin import auth as firebase_auth, credentials, _token_gen
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -21,13 +21,14 @@ logger = get_logger(__name__)
 
 # Initialize Firebase Admin SDK once at module load
 _firebase_app: firebase_admin.App | None = None
+_token_verifier: _token_gen.TokenVerifier | None = None
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def init_firebase() -> None:
     """Initialize Firebase Admin SDK using the configured project."""
-    global _firebase_app
+    global _firebase_app, _token_verifier
     if _firebase_app is not None:
         return  # already initialized
 
@@ -37,13 +38,14 @@ def init_firebase() -> None:
         _firebase_app = firebase_admin.initialize_app(
             options={"projectId": settings.firebase_project_id}
         )
+        _token_verifier = _token_gen.TokenVerifier(_firebase_app)
         logger.info(
             "Firebase Admin SDK initialized",
             project_id=settings.firebase_project_id,
         )
     else:
         logger.warning(
-            "FIREBASE_PROJECT_ID not set — authentication is DISABLED. "
+            "FIREBASE_PROJECT_ID not set — protected endpoints will reject requests. "
             "Set FIREBASE_PROJECT_ID to enable Firebase token verification."
         )
 
@@ -78,16 +80,13 @@ async def verify_firebase_token(
     - No Authorization header provided
     - Token is invalid, expired, or from wrong project
 
-    When FIREBASE_PROJECT_ID is not configured, authentication is skipped
-    and a placeholder user is returned (development mode only).
+    Raises HTTP 500 if:
+    - Server FIREBASE_PROJECT_ID is not configured
     """
     if not settings.firebase_project_id:
-        # Dev mode: no auth required
-        logger.warning("Auth bypassed — Firebase not configured")
-        return VerifiedUser(
-            firebase_uid="dev_uid",
-            email="dev@lifeos.local",
-            display_name="Dev User",
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Firebase authentication is not configured on the server. Set FIREBASE_PROJECT_ID.",
         )
 
     if credentials is None:
@@ -98,11 +97,14 @@ async def verify_firebase_token(
         )
 
     try:
-        decoded = firebase_auth.verify_id_token(
-            credentials.credentials,
-            app=_firebase_app,
-            check_revoked=True,
-        )
+        if _token_verifier is not None:
+            decoded = _token_verifier.verify_id_token(credentials.credentials)
+        else:
+            decoded = firebase_auth.verify_id_token(
+                credentials.credentials,
+                app=_firebase_app,
+                check_revoked=False,
+            )
         return VerifiedUser(
             firebase_uid=decoded["uid"],
             email=decoded.get("email"),
@@ -114,7 +116,7 @@ async def verify_firebase_token(
             detail="Token has been revoked",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except firebase_auth.ExpiredIdTokenError:
+    except (firebase_auth.ExpiredIdTokenError, _token_gen.ExpiredIdTokenError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",

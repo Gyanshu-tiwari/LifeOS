@@ -89,7 +89,7 @@ def _make_worker_settings():
     Avoids ImportError when arq is not a dependency.
     """
     try:
-        from arq.connections import RedisSettings
+        from arq.connections import RedisSettings  # type: ignore[import-not-found]
     except ImportError:
         return None
 
@@ -101,13 +101,13 @@ def _make_worker_settings():
     else:
         host, port = "localhost", 6379
 
-    redis_settings = RedisSettings(host=host, port=port)
+    configured_redis_settings = RedisSettings(host=host, port=port)
 
     class WorkerSettings:
         functions = [run_plan_generation]
         on_startup = startup
         on_shutdown = shutdown
-        redis_settings = redis_settings
+        redis_settings = configured_redis_settings
         max_jobs = settings.worker_max_jobs
         job_timeout = settings.plan_run_timeout_seconds
         health_check_interval = 30

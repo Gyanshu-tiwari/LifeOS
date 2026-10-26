@@ -3,6 +3,8 @@
 import uuid
 from datetime import datetime
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import (
     DateTime,
     ForeignKey,
@@ -17,6 +19,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lifeos.db.base import Base
+
+if TYPE_CHECKING:
+    from lifeos.db.models.plan import Plan
+    from lifeos.db.models.task import Task
 
 
 class PlanSection(Base):

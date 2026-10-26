@@ -16,6 +16,7 @@ from lifeos.schemas.activity import (
     ActivityResponse,
     ActivityUpdate,
 )
+from lifeos.schemas.plan import PlanResponse
 from lifeos.schemas.plan_run import PlanRunResponse, PlanRunStartRequest
 from lifeos.services.activity_service import ActivityService
 
@@ -177,6 +178,8 @@ async def start_plan_run(
         user_id=user.id,
         idempotency_key=idempotency_key,
     )
+    await db.commit()
+    await db.refresh(run)
     return PlanRunResponse.model_validate(run)
 
 
@@ -286,3 +289,22 @@ async def list_plan_runs(
         "items": [PlanRunResponse.model_validate(r).model_dump() for r in runs],
         "total": len(runs),
     }
+
+
+@router.get(
+    "/{activity_id}/plans",
+    response_model=list[PlanResponse],
+    summary="List plans for an activity",
+)
+async def list_activity_plans(
+    activity_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[PlanResponse]:
+    svc = _svc(db)
+    activity = await svc.get_activity(activity_id, current_user)
+    from lifeos.services.plan_service import PlanService
+    plan_svc = PlanService(db)
+    plans = await plan_svc.get_plans_for_activity(activity.id, activity.user_id)
+    return [PlanResponse.model_validate(p) for p in plans]
+

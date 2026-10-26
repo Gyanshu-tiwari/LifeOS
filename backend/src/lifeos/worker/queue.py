@@ -26,8 +26,8 @@ async def get_arq_pool():
         return _pool
 
     try:
-        from arq import create_pool
-        from arq.connections import RedisSettings
+        from arq import create_pool  # type: ignore[import-not-found]
+        from arq.connections import RedisSettings  # type: ignore[import-not-found]
 
         url = settings.redis_url
         if url.startswith("redis://"):

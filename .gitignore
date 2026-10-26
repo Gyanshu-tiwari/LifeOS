@@ -12,6 +12,7 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+.vercel/
 
 # Editor directories and files
 .vscode/*
@@ -45,3 +46,15 @@ __pycache__/
 venv/
 ENV/
 env/
+coverage/
+.coverage
+htmlcov/
+*.sqlite3
+*.db
+
+# Credentials & Service Accounts
+*serviceAccount*.json
+*firebase-adminsdk*.json
+credentials.json
+client_secret*.json
+

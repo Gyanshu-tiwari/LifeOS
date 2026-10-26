@@ -35,6 +35,7 @@ from lifeos.db.models.plan_run import PlanRun
 from lifeos.db.models.plan_section import PlanSection
 from lifeos.db.models.task import Task, TaskDependency
 from lifeos.repositories.activity import ActivityRepository
+from lifeos.repositories.notification import NotificationRepository
 from lifeos.repositories.plan import PlanRepository
 from lifeos.repositories.task import TaskRepository
 from lifeos.services.evidence_service import EvidenceService
@@ -55,6 +56,7 @@ class PlanOrchestrator:
         self._plan_repo = PlanRepository(db)
         self._task_repo = TaskRepository(db)
         self._activity_repo = ActivityRepository(db)
+        self._notification_repo = NotificationRepository(db)
 
     async def create_plan_run(
         self,
@@ -119,6 +121,21 @@ class PlanOrchestrator:
                 plan_id=str(plan.id),
             )
 
+            # Generate PLAN_READY notification
+            try:
+                await self._notification_repo.create_notification(
+                    user_id=activity.user_id,
+                    type="PLAN_READY",
+                    title="Plan ready",
+                    message=f"Your '{activity.title}' plan is ready to explore.",
+                    entity_type="plan",
+                    entity_id=plan.id,
+                    action_url=f"/plans/{plan.id}",
+                    idempotent=True,
+                )
+            except Exception as notif_err:
+                logger.warning("Failed to create PLAN_READY notification", error=str(notif_err))
+
         except Exception as exc:
             run.status = "FAILED"
             run.error_code = type(exc).__name__
@@ -130,6 +147,21 @@ class PlanOrchestrator:
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
+
+            # Generate PLAN_FAILED notification
+            try:
+                await self._notification_repo.create_notification(
+                    user_id=activity.user_id,
+                    type="PLAN_FAILED",
+                    title="Plan generation failed",
+                    message=f"We couldn't generate the plan for '{activity.title}'. Please try again.",
+                    entity_type="activity",
+                    entity_id=activity.id,
+                    action_url=f"/plans/{activity.id}/generating",
+                    idempotent=True,
+                )
+            except Exception as notif_err:
+                logger.warning("Failed to create PLAN_FAILED notification", error=str(notif_err))
 
         run.finished_at = datetime.now(tz=timezone.utc)
         await self._db.flush()

@@ -32,7 +32,10 @@ from lifeos.schemas.plan import (
     PlaceResponse,
     PlanProgressResponse,
     PlanResponse,
+    PlanSectionResponse,
     RouteResponse,
+    RouteRecalculateRequest,
+    TaskResponse,
 )
 from lifeos.services.plan_service import PlanService
 
@@ -63,6 +66,49 @@ async def get_plan(
     svc = PlanService(db)
     plan = await svc.get_plan(plan_id, user_id)
     return PlanResponse.model_validate(plan)
+
+
+@router.get(
+    "/{plan_id}/sections",
+    response_model=list[PlanSectionResponse],
+    summary="Get plan sections",
+)
+async def get_plan_sections(
+    plan_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[PlanSectionResponse]:
+    user_id = await _get_user_id(db, current_user)
+    svc = PlanService(db)
+    await svc.get_plan(plan_id, user_id)
+    from lifeos.repositories.plan import PlanRepository
+    plan_repo = PlanRepository(db)
+    sections = await plan_repo.get_sections_for_plan(plan_id)
+    return [PlanSectionResponse.model_validate(s) for s in sections]
+
+
+@router.get(
+    "/{plan_id}/tasks",
+    response_model=list[TaskResponse],
+    summary="Get all tasks for a plan",
+)
+async def get_plan_tasks(
+    plan_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[TaskResponse]:
+    user_id = await _get_user_id(db, current_user)
+    svc = PlanService(db)
+    await svc.get_plan(plan_id, user_id)
+    from lifeos.repositories.plan import PlanRepository
+    from lifeos.repositories.task import TaskRepository
+    plan_repo = PlanRepository(db)
+    sections = await plan_repo.get_sections_for_plan(plan_id)
+    section_ids = [s.id for s in sections]
+    task_repo = TaskRepository(db)
+    tasks = await task_repo.get_tasks_for_plan_sections(section_ids)
+    return [TaskResponse.model_validate(t) for t in tasks]
+
 
 
 @router.get(
@@ -280,7 +326,7 @@ async def update_itinerary_item(
     response_model=RouteResponse | None,
     summary="Recalculate route for this plan",
     description=(
-        "Re-runs the Maps integration for this plan using the activity's "
+        "Re-runs the Maps integration for this plan using provided or activity's "
         "origin/destination. Overwrites the existing route record."
     ),
 )
@@ -288,6 +334,7 @@ async def recalculate_route(
     plan_id: uuid.UUID,
     db: DbSession,
     current_user: CurrentUser,
+    payload: RouteRecalculateRequest | None = None,
 ) -> RouteResponse | None:
     user_id = await _get_user_id(db, current_user)
     svc = PlanService(db)
@@ -297,6 +344,8 @@ async def recalculate_route(
     from sqlalchemy import select
     from lifeos.db.models.activity import Activity
     from lifeos.db.models.route import Route
+    from lifeos.db.models.place import Place
+    from lifeos.db.models.plan_place import PlanPlace
     from lifeos.repositories.route import RouteRepository
     from lifeos.integrations.maps import compute_route
     from lifeos.core.exceptions import ProviderError
@@ -306,14 +355,50 @@ async def recalculate_route(
     )
     activity = result.scalar_one_or_none()
 
-    if not activity or not activity.origin_text or not activity.destination_text:
+    origin_text = (
+        (payload.origin.strip() if payload and payload.origin else None)
+        or (activity.origin_text if activity else None)
+    )
+    destination_text = (
+        (payload.destination.strip() if payload and payload.destination else None)
+        or (activity.destination_text if activity else None)
+    )
+    travel_mode = (
+        (payload.travel_mode.strip() if payload and payload.travel_mode else None)
+        or (activity.travel_mode if activity else None)
+        or "DRIVE"
+    )
+
+    # If destination_text is still missing, infer from plan places or activity title
+    if not destination_text:
+        places_res = await db.execute(
+            select(Place).join(PlanPlace, PlanPlace.place_id == Place.id)
+            .where(PlanPlace.plan_id == plan_id)
+            .limit(1)
+        )
+        first_place = places_res.scalar_one_or_none()
+        if first_place and (first_place.formatted_address or first_place.name):
+            destination_text = first_place.formatted_address or first_place.name
+        elif activity and activity.title:
+            destination_text = activity.title
+
+    if not origin_text or not destination_text:
         return None
+
+    # Update activity fields so future fetches know the resolved origin/destination
+    if activity:
+        activity.origin_text = origin_text
+        if destination_text:
+            activity.destination_text = destination_text
+        if travel_mode:
+            activity.travel_mode = travel_mode
+        await db.flush()
 
     try:
         route_data = await compute_route(
-            activity.origin_text,
-            activity.destination_text,
-            travel_mode=activity.travel_mode or "DRIVE",
+            origin_text,
+            destination_text,
+            mode=travel_mode,
         )
     except ProviderError:
         return None
@@ -327,12 +412,14 @@ async def recalculate_route(
         await db.flush()
 
     route = await route_repo.create_route(plan_id, {
-        "origin_text": activity.origin_text,
-        "destination_text": activity.destination_text,
-        "travel_mode": activity.travel_mode or "DRIVE",
+        "origin_text": origin_text,
+        "destination_text": destination_text,
+        "travel_mode": travel_mode,
         "distance_meters": route_data.get("distance_meters"),
         "duration_seconds": route_data.get("duration_seconds"),
         "polyline": route_data.get("polyline"),
         "provider": "google",
     })
+    await db.commit()
+    await db.refresh(route)
     return RouteResponse.model_validate(route)

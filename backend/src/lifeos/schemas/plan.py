@@ -195,6 +195,15 @@ class RouteResponse(BaseModel):
     travel_mode: str | None
     distance_meters: int | None
     duration_seconds: int | None
+    polyline: str | None = None
     provider: str | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class RouteRecalculateRequest(BaseModel):
+    origin: str | None = None
+    destination: str | None = None
+    travel_mode: str | None = None
+
+
