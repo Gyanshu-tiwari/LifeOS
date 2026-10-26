@@ -3,11 +3,18 @@
 import uuid
 from datetime import datetime
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import DateTime, Float, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lifeos.db.base import Base
+
+if TYPE_CHECKING:
+    from lifeos.db.models.itinerary_item import ItineraryItem
+    from lifeos.db.models.plan_place import PlanPlace
+    from lifeos.db.models.route_stop import RouteStop
 
 
 class Place(Base):
