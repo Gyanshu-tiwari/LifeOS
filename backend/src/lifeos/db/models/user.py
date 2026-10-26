@@ -3,11 +3,17 @@
 import uuid
 from datetime import datetime
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lifeos.db.base import Base
+
+if TYPE_CHECKING:
+    from lifeos.db.models.activity import Activity
+    from lifeos.db.models.notification import Notification
 
 
 class User(Base):
@@ -42,6 +48,9 @@ class User(Base):
     # Relationships
     activities: Mapped[list["Activity"]] = relationship(
         "Activity", back_populates="user", cascade="all, delete-orphan"
+    )
+    notifications: Mapped[list["Notification"]] = relationship(
+        "Notification", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

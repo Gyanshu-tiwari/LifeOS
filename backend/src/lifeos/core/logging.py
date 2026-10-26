@@ -22,8 +22,8 @@ plan_run_id_var: ContextVar[str] = ContextVar("plan_run_id", default="")
 
 
 def add_correlation_ids(
-    logger: Any, method: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+    logger: Any, method: str, event_dict: structlog.types.EventDict
+) -> structlog.types.EventDict:
     """Structlog processor: inject correlation IDs from context variables."""
     if rid := request_id_var.get():
         event_dict["request_id"] = rid

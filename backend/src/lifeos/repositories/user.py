@@ -50,12 +50,23 @@ class UserRepository:
                 await self._db.flush()
             return existing, False
 
-        user = User(
-            firebase_uid=firebase_uid,
-            email=email,
-            display_name=display_name,
-        )
-        self._db.add(user)
-        await self._db.flush()
-        await self._db.refresh(user)
-        return user, True
+        try:
+            user = User(
+                firebase_uid=firebase_uid,
+                email=email,
+                display_name=display_name,
+            )
+            self._db.add(user)
+            await self._db.flush()
+            await self._db.refresh(user)
+            return user, True
+        except Exception:
+            # Concurrent request created user row with same firebase_uid or email
+            existing = await self.get_by_firebase_uid(firebase_uid)
+            if not existing:
+                stmt = select(User).where(User.email == email)
+                result = await self._db.execute(stmt)
+                existing = result.scalar_one_or_none()
+            if existing:
+                return existing, False
+            raise

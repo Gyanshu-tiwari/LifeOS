@@ -3,11 +3,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lifeos.db.base import Base
+
+if TYPE_CHECKING:
+    from lifeos.db.models.activity import Activity
+    from lifeos.db.models.evidence import Evidence
+    from lifeos.db.models.tool_call import ToolCall
 
 
 class PlanRun(Base):

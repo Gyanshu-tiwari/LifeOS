@@ -76,11 +76,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — tighten in production
+# CORS — configured via CORS_ORIGINS environment variable
+cors_origins = settings.allowed_cors_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=True if cors_origins != ["*"] else False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

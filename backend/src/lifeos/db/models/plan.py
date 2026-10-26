@@ -3,11 +3,21 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lifeos.db.base import Base
+
+if TYPE_CHECKING:
+    from lifeos.db.models.activity import Activity
+    from lifeos.db.models.itinerary_item import ItineraryItem
+    from lifeos.db.models.packing_item import PackingItem
+    from lifeos.db.models.plan_place import PlanPlace
+    from lifeos.db.models.plan_section import PlanSection
+    from lifeos.db.models.route import Route
 
 
 class Plan(Base):

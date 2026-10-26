@@ -27,3 +27,17 @@ async def dispose_engine():
     """Ensure the async engine pool is properly disposed after all tests."""
     yield
     await engine.dispose()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def override_auth_for_tests():
+    """Explicit test user for automated integration test suites."""
+    from lifeos.core.security import verify_firebase_token, VerifiedUser
+    app.dependency_overrides[verify_firebase_token] = lambda: VerifiedUser(
+        firebase_uid="test_uid",
+        email="test@lifeos.local",
+        display_name="Test User",
+    )
+    yield
+    app.dependency_overrides.pop(verify_firebase_token, None)
+

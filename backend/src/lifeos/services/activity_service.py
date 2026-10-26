@@ -61,7 +61,8 @@ class ActivityService:
         activity = await self._activity_repo.create(
             user_id=user.id, data=data
         )
-        # commit handled by get_db dependency
+        await self._db.commit()
+        await self._db.refresh(activity)
 
         logger.info(
             "Activity created",

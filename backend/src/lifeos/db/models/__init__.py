@@ -20,6 +20,7 @@ from lifeos.db.models.packing_item import PackingItem  # noqa: F401
 from lifeos.db.models.itinerary_item import ItineraryItem  # noqa: F401
 from lifeos.db.models.tool_call import ToolCall  # noqa: F401
 from lifeos.db.models.evidence import Evidence  # noqa: F401
+from lifeos.db.models.notification import Notification  # noqa: F401
 
 __all__ = [
     "User",
@@ -37,4 +38,5 @@ __all__ = [
     "ItineraryItem",
     "ToolCall",
     "Evidence",
+    "Notification",
 ]

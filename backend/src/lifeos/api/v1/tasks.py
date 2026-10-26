@@ -14,9 +14,16 @@ Endpoints:
 import uuid
 
 from fastapi import APIRouter, status
+from sqlalchemy import select
 
+from lifeos.core.exceptions import AuthorizationError, NotFoundError
 from lifeos.core.security import CurrentUser
 from lifeos.db.deps import DbSession
+from lifeos.db.models.activity import Activity
+from lifeos.db.models.plan import Plan
+from lifeos.db.models.plan_section import PlanSection
+from lifeos.db.models.task import Task
+from lifeos.repositories.user import UserRepository
 from lifeos.schemas.plan import (
     TaskCreate,
     TaskDependencyCreate,
@@ -32,6 +39,60 @@ def _svc(db: DbSession) -> TaskService:
     return TaskService(db)
 
 
+async def _get_user_id(db: DbSession, current_user: CurrentUser) -> uuid.UUID:
+    repo = UserRepository(db)
+    user, _ = await repo.get_or_create(
+        firebase_uid=current_user.firebase_uid,
+        email=current_user.email,
+        display_name=current_user.display_name,
+    )
+    return user.id
+
+
+async def _assert_task_ownership(
+    db: DbSession, task_id: uuid.UUID, current_user: CurrentUser
+) -> None:
+    user_id = await _get_user_id(db, current_user)
+    stmt = (
+        select(Activity.user_id)
+        .join(Plan, Plan.activity_id == Activity.id)
+        .join(PlanSection, PlanSection.plan_id == Plan.id)
+        .join(Task, Task.plan_section_id == PlanSection.id)
+        .where(Task.id == task_id)
+    )
+    result = await db.execute(stmt)
+    owner_user_id = result.scalar_one_or_none()
+    if owner_user_id is None:
+        raise NotFoundError(f"Task {task_id} not found", code="TASK_NOT_FOUND")
+    if owner_user_id != user_id:
+        raise AuthorizationError(
+            "You do not have access to this task", code="TASK_ACCESS_DENIED"
+        )
+
+
+async def _assert_section_ownership(
+    db: DbSession, section_id: uuid.UUID, current_user: CurrentUser
+) -> None:
+    user_id = await _get_user_id(db, current_user)
+    stmt = (
+        select(Activity.user_id)
+        .join(Plan, Plan.activity_id == Activity.id)
+        .join(PlanSection, PlanSection.plan_id == Plan.id)
+        .where(PlanSection.id == section_id)
+    )
+    result = await db.execute(stmt)
+    owner_user_id = result.scalar_one_or_none()
+    if owner_user_id is None:
+        raise NotFoundError(
+            f"PlanSection {section_id} not found", code="SECTION_NOT_FOUND"
+        )
+    if owner_user_id != user_id:
+        raise AuthorizationError(
+            "You do not have access to this section",
+            code="SECTION_ACCESS_DENIED",
+        )
+
+
 @router.post(
     "",
     response_model=TaskResponse,
@@ -43,6 +104,7 @@ async def create_task(
     db: DbSession,
     current_user: CurrentUser,
 ) -> TaskResponse:
+    await _assert_section_ownership(db, payload.plan_section_id, current_user)
     svc = _svc(db)
     task = await svc.create_task(payload)
     return TaskResponse.model_validate(task)
@@ -54,6 +116,7 @@ async def get_task(
     db: DbSession,
     current_user: CurrentUser,
 ) -> TaskResponse:
+    await _assert_task_ownership(db, task_id, current_user)
     svc = _svc(db)
     task = await svc.get_task(task_id)
     return TaskResponse.model_validate(task)
@@ -66,6 +129,7 @@ async def update_task(
     db: DbSession,
     current_user: CurrentUser,
 ) -> TaskResponse:
+    await _assert_task_ownership(db, task_id, current_user)
     svc = _svc(db)
     task = await svc.update_task(task_id, payload)
     return TaskResponse.model_validate(task)
@@ -81,6 +145,7 @@ async def complete_task(
     db: DbSession,
     current_user: CurrentUser,
 ) -> TaskResponse:
+    await _assert_task_ownership(db, task_id, current_user)
     svc = _svc(db)
     task = await svc.complete_task(task_id)
     return TaskResponse.model_validate(task)
@@ -96,6 +161,7 @@ async def reopen_task(
     db: DbSession,
     current_user: CurrentUser,
 ) -> TaskResponse:
+    await _assert_task_ownership(db, task_id, current_user)
     svc = _svc(db)
     task = await svc.reopen_task(task_id)
     return TaskResponse.model_validate(task)
@@ -113,6 +179,8 @@ async def add_dependency(
     db: DbSession,
     current_user: CurrentUser,
 ) -> dict:
+    await _assert_task_ownership(db, task_id, current_user)
+    await _assert_task_ownership(db, payload.depends_on_id, current_user)
     svc = _svc(db)
     await svc.add_dependency(task_id, payload.depends_on_id)
     return {
@@ -133,6 +201,7 @@ async def remove_dependency(
     db: DbSession,
     current_user: CurrentUser,
 ) -> dict:
+    await _assert_task_ownership(db, task_id, current_user)
     svc = _svc(db)
     await svc.remove_dependency(task_id, depends_on_id)
     return {"message": "Dependency removed"}

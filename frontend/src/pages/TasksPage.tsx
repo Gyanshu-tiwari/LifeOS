@@ -1,288 +1,327 @@
 import React, { useState } from 'react';
-import { useLifeOS } from '../context/LifeOSContext';
-import {
-  CheckSquare,
-  Plus,
-  Search,
-  Filter,
-  Calendar,
-  CheckCircle2,
-  Trash2,
-  AlertCircle,
-  Clock,
-  Sparkles,
-  X,
-  ListTodo,
-} from 'lucide-react';
-import { TaskItem } from '../components/dashboard/TaskItem';
-import { LifeOSButton } from '../components/ui/LifeOSButton';
-import { LifeOSModal } from '../components/ui/LifeOSModal';
-import { LifeOSEmptyState } from '../components/ui/LifeOSEmptyState';
-import { LifeOSBadge } from '../components/ui/LifeOSBadge';
+import { useOutletContext } from 'react-router-dom';
+import { Check, Plus, Loader2, ListTodo } from 'lucide-react';
+import { Plan, Task, PlanSection } from '../types';
+import { usePlanTasks, usePlanSections, useCompleteTask, useReopenTask, useCreateTask } from '../hooks';
+import { cn } from '../lib/utils';
+import { TaskListSkeleton } from '../components/ui/Skeletons';
+import { ErrorState } from '../components/ui/ErrorState';
+import { EmptyState } from '../components/ui/EmptyState';
+import { useToast } from '../context/ToastContext';
 
-export const TasksPage: React.FC = () => {
-  const { tasks, toggleTask, addTask, deleteTask, activeGoal } = useLifeOS();
+export default function TasksPage() {
+  const { plan } = useOutletContext<{ plan: Plan }>();
+  const [filter, setFilter] = useState<'all' | 'todo' | 'done'>('all');
+  const { addToast } = useToast();
 
-  const [activeFilter, setActiveFilter] = useState<'all' | 'today' | 'upcoming' | 'completed'>('all');
-  const [priorityFilter, setPriorityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
-  const [search, setSearch] = useState('');
-  const [showAddModal, setShowAddModal] = useState(false);
+  const { data: tasks = [], isLoading: tasksLoading, error: tasksError, refetch } = usePlanTasks(plan.id);
+  const { data: sections = [] } = usePlanSections(plan.id);
 
-  // New task form state
-  const [newTitle, setNewTitle] = useState('');
-  const [newDescription, setNewDescription] = useState('');
-  const [newDueLabel, setNewDueLabel] = useState('Today');
-  const [newPriority, setNewPriority] = useState<'high' | 'medium' | 'low'>('medium');
-  const [newCategory, setNewCategory] = useState('Housing');
+  const completeMutation = useCompleteTask(plan.id);
+  const reopenMutation = useReopenTask(plan.id);
 
-  const filteredTasks = tasks.filter((t) => {
-    const matchesSearch =
-      t.title.toLowerCase().includes(search.toLowerCase()) ||
-      t.description.toLowerCase().includes(search.toLowerCase());
+  const toggleTask = (task: Task) => {
+    if (task.status === 'COMPLETED') {
+      reopenMutation.mutate(task.id, {
+        onSuccess: () => {
+          addToast({
+            title: 'Task Reopened',
+            message: `"${task.title}" marked as to-do.`,
+            type: 'info',
+            duration: 2500,
+          });
+        },
+        onError: () => {
+          addToast({
+            title: 'Action Failed',
+            message: 'Could not update task status.',
+            type: 'error',
+          });
+        },
+      });
+    } else {
+      completeMutation.mutate(task.id, {
+        onSuccess: () => {
+          addToast({
+            title: 'Task Completed',
+            message: `"${task.title}" marked as done.`,
+            type: 'success',
+            duration: 2500,
+          });
+        },
+        onError: () => {
+          addToast({
+            title: 'Action Failed',
+            message: 'Could not update task status.',
+            type: 'error',
+          });
+        },
+      });
+    }
+  };
 
-    if (!matchesSearch) return false;
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter((t) => t.status === 'COMPLETED').length;
+  const progressPercent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-    if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
+  // Group tasks by section
+  const sectionMap = new Map<string, PlanSection>();
+  sections.forEach((s) => sectionMap.set(s.id, s));
 
-    if (activeFilter === 'completed') return t.isCompleted;
-    if (activeFilter === 'today') return !t.isCompleted && t.dueLabel.toLowerCase() === 'today';
-    if (activeFilter === 'upcoming') return !t.isCompleted && t.dueLabel.toLowerCase() !== 'today';
-    return true;
-  });
+  // Determine section buckets
+  const groupedTasks: { sectionTitle: string; sectionId: string; tasks: Task[] }[] = [];
 
-  const completedCount = tasks.filter((t) => t.isCompleted).length;
-  const pendingCount = tasks.length - completedCount;
-
-  const handleCreateTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim()) return;
-
-    await addTask({
-      title: newTitle.trim(),
-      description: newDescription.trim(),
-      dueDate: '2026-08-15',
-      dueLabel: newDueLabel,
-      priority: newPriority,
-      category: newCategory,
-      relatedAgent: 'planning',
+  if (sections.length > 0) {
+    sections.forEach((sec) => {
+      const secTasks = tasks.filter((t) => t.plan_section_id === sec.id);
+      groupedTasks.push({
+        sectionTitle: sec.title,
+        sectionId: sec.id,
+        tasks: secTasks,
+      });
     });
+    // Any tasks with unknown section
+    const orphanTasks = tasks.filter((t) => !sectionMap.has(t.plan_section_id));
+    if (orphanTasks.length > 0) {
+      groupedTasks.push({
+        sectionTitle: 'Additional Tasks',
+        sectionId: orphanTasks[0].plan_section_id || 'general',
+        tasks: orphanTasks,
+      });
+    }
+  } else {
+    // If no sections in DB yet, group all into one
+    groupedTasks.push({
+      sectionTitle: 'All Tasks',
+      sectionId: 'default',
+      tasks,
+    });
+  }
 
-    setNewTitle('');
-    setNewDescription('');
-    setShowAddModal(false);
+  return (
+    <div className="p-4 space-y-6 max-w-3xl mx-auto">
+      {/* Progress Card */}
+      <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-soft-sm">
+        <div className="flex justify-between items-end mb-2">
+          <div>
+            <h2 className="font-bold text-lifeos-navy text-base">Checklist & Tasks</h2>
+            <p className="text-xs text-lifeos-muted mt-0.5">
+              {completedTasks} of {totalTasks} completed
+            </p>
+          </div>
+          <span className="text-xl font-bold text-lifeos-navy">{progressPercent}%</span>
+        </div>
+        <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden mt-1">
+          <div
+            className="bg-lifeos-blue h-full transition-all duration-500 ease-out"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex space-x-2 overflow-x-auto no-scrollbar pb-1">
+        <FilterButton
+          label={`All (${totalTasks})`}
+          active={filter === 'all'}
+          onClick={() => setFilter('all')}
+        />
+        <FilterButton
+          label={`To Do (${totalTasks - completedTasks})`}
+          active={filter === 'todo'}
+          onClick={() => setFilter('todo')}
+        />
+        <FilterButton
+          label={`Done (${completedTasks})`}
+          active={filter === 'done'}
+          onClick={() => setFilter('done')}
+        />
+      </div>
+
+      {/* Loading & Error States */}
+      {tasksLoading ? (
+        <TaskListSkeleton />
+      ) : tasksError ? (
+        <ErrorState
+          error={tasksError}
+          fallbackMessage="We couldn't retrieve tasks for this plan."
+          onRetry={() => refetch()}
+        />
+      ) : tasks.length === 0 ? (
+        <EmptyState
+          icon={ListTodo}
+          title="No Tasks Yet"
+          description="Tasks generated for this plan will appear here. You can also add your own tasks below."
+        />
+      ) : (
+        /* Task Sections */
+        <div className="space-y-6">
+          {groupedTasks.map((group) => {
+            const sectionTasks = group.tasks.filter((t) => {
+              if (filter === 'todo') return t.status !== 'COMPLETED';
+              if (filter === 'done') return t.status === 'COMPLETED';
+              return true;
+            });
+
+            if (sectionTasks.length === 0 && filter !== 'all') return null;
+
+            return (
+              <div
+                key={group.sectionId}
+                className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100 shadow-soft-sm"
+              >
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-sm text-lifeos-navy">{group.sectionTitle}</h3>
+                  <span className="text-xs text-lifeos-muted font-semibold bg-gray-50 px-2 py-0.5 rounded-md">
+                    {sectionTasks.filter((t) => t.status === 'COMPLETED').length}/{sectionTasks.length}
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  {sectionTasks.map((task) => {
+                    const isCompleted = task.status === 'COMPLETED';
+                    const isPending =
+                      (completeMutation.isPending && completeMutation.variables === task.id) ||
+                      (reopenMutation.isPending && reopenMutation.variables === task.id);
+
+                    return (
+                      <div
+                        key={task.id}
+                        role="checkbox"
+                        aria-checked={isCompleted}
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === ' ' || e.key === 'Enter') {
+                            e.preventDefault();
+                            if (!isPending) toggleTask(task);
+                          }
+                        }}
+                        className="flex items-start space-x-3 cursor-pointer group p-2 -mx-2 rounded-xl hover:bg-gray-50/80 transition select-none"
+                        onClick={() => {
+                          if (!isPending) toggleTask(task);
+                        }}
+                      >
+                        <div
+                          className={cn(
+                            'w-5 h-5 rounded-md mt-0.5 shrink-0 flex items-center justify-center transition-all border shadow-sm',
+                            isCompleted
+                              ? 'bg-emerald-500 border-emerald-500 text-white'
+                              : 'border-gray-300 bg-white group-hover:border-lifeos-blue',
+                            isPending && 'opacity-50 animate-pulse'
+                          )}
+                        >
+                          {isCompleted && <Check size={13} strokeWidth={3} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p
+                            className={cn(
+                              'text-sm font-medium transition-colors leading-snug',
+                              isCompleted ? 'text-gray-400 line-through' : 'text-lifeos-navy'
+                            )}
+                          >
+                            {task.title}
+                          </p>
+                          {task.description && !isCompleted && (
+                            <p className="text-xs text-lifeos-muted mt-1 leading-relaxed">
+                              {task.description}
+                            </p>
+                          )}
+                          {task.priority === 'HIGH' && !isCompleted && (
+                            <span className="inline-block mt-1.5 bg-amber-50 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-200">
+                              Essential
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Add Task inside section */}
+                <CreateTaskForm sectionId={group.sectionId} planId={plan.id} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateTaskForm({ sectionId, planId }: { sectionId: string; planId: string }) {
+  const [title, setTitle] = useState('');
+  const createMutation = useCreateTask(planId);
+  const { addToast } = useToast();
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (title.trim()) {
+      createMutation.mutate(
+        { plan_section_id: sectionId, title: title.trim() },
+        {
+          onSuccess: () => {
+            setTitle('');
+            addToast({
+              title: 'Task Added',
+              message: 'Your new task has been recorded.',
+              type: 'success',
+              duration: 2500,
+            });
+          },
+          onError: () => {
+            addToast({
+              title: 'Could Not Add Task',
+              message: 'Please try again.',
+              type: 'error',
+            });
+          },
+        }
+      );
+    }
   };
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-bold text-[#1E60F2] uppercase tracking-wider mb-1">
-            <CheckSquare className="w-4 h-4" />
-            <span>Task Operations</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#0B192C] tracking-tight">
-            Execution Tasks
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            Actionable items coordinated across your active goals and specialized agents.
-          </p>
-        </div>
-
-        <LifeOSButton
-          onClick={() => setShowAddModal(true)}
-          variant="primary"
-          size="md"
-          leftIcon={<Plus className="w-4 h-4" />}
-        >
-          Add Custom Task
-        </LifeOSButton>
-      </div>
-
-      {/* Stats Counter Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-soft">
-          <span className="text-[11px] font-bold text-slate-400 uppercase">Total Tasks</span>
-          <p className="text-2xl font-extrabold text-slate-800 mt-1">{tasks.length}</p>
-        </div>
-        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-soft">
-          <span className="text-[11px] font-bold text-blue-500 uppercase">Pending</span>
-          <p className="text-2xl font-extrabold text-[#1E60F2] mt-1">{pendingCount}</p>
-        </div>
-        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-soft">
-          <span className="text-[11px] font-bold text-emerald-600 uppercase">Completed</span>
-          <p className="text-2xl font-extrabold text-emerald-600 mt-1">{completedCount}</p>
-        </div>
-        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-soft">
-          <span className="text-[11px] font-bold text-amber-600 uppercase">Due Today</span>
-          <p className="text-2xl font-extrabold text-amber-600 mt-1">
-            {tasks.filter((t) => !t.isCompleted && t.dueLabel.toLowerCase() === 'today').length}
-          </p>
-        </div>
-      </div>
-
-      {/* Filter and Search */}
-      <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-3xl border border-slate-200/90 shadow-soft">
-        <div className="flex items-center gap-1.5 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
-          {(['all', 'today', 'upcoming', 'completed'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveFilter(tab)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold capitalize transition-all whitespace-nowrap ${
-                activeFilter === tab
-                  ? 'bg-blue-50 text-[#1E60F2] border border-blue-200'
-                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2.5 w-full md:w-auto">
-          {/* Priority Filter */}
-          <select
-            value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value as any)}
-            className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
-          >
-            <option value="all">All Priorities</option>
-            <option value="high">High Priority</option>
-            <option value="medium">Medium Priority</option>
-            <option value="low">Low Priority</option>
-          </select>
-
-          <div className="relative flex-1 md:w-64">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search tasks..."
-              className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#1E60F2]/20"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Task List or Empty State */}
-      {filteredTasks.length === 0 ? (
-        <LifeOSEmptyState
-          icon={ListTodo}
-          title="All caught up!"
-          description="No tasks match the active filters. Keep progressing toward your goals."
-          actionLabel="Add a Task"
-          onAction={() => setShowAddModal(true)}
-        />
-      ) : (
-        <div className="space-y-3">
-          {filteredTasks.map((task) => (
-            <div
-              key={task.id}
-              className="flex items-center justify-between gap-3 group bg-white rounded-2xl p-1 border border-transparent hover:border-slate-200"
-            >
-              <div className="flex-1">
-                <TaskItem task={task} onToggle={toggleTask} />
-              </div>
-              <button
-                onClick={() => deleteTask(task.id)}
-                aria-label="Delete task"
-                className="w-8 h-8 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mr-2"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Add Task Modal */}
-      <LifeOSModal
-        isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        title="Create New Actionable Task"
-        subtitle="Planning Agent will index this task into the active goal critical path."
-        footer={
-          <>
-            <LifeOSButton
-              variant="outline"
-              size="sm"
-              onClick={() => setShowAddModal(false)}
-            >
-              Cancel
-            </LifeOSButton>
-            <LifeOSButton
-              variant="primary"
-              size="sm"
-              onClick={handleCreateTask}
-            >
-              Add Task
-            </LifeOSButton>
-          </>
-        }
+    <form onSubmit={handleSubmit} className="mt-4 flex items-center space-x-2 border-t border-gray-100 pt-3">
+      <input
+        type="text"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Add a new task..."
+        className="flex-1 bg-gray-50 px-3.5 py-2 rounded-xl text-xs font-medium border border-gray-200 outline-none focus:border-lifeos-blue transition text-lifeos-navy"
+        disabled={createMutation.isPending}
+      />
+      <button
+        type="submit"
+        disabled={!title.trim() || createMutation.isPending}
+        className="bg-lifeos-navy text-white px-3.5 py-2 rounded-xl text-xs font-semibold hover:bg-lifeos-blue transition disabled:opacity-50 flex items-center space-x-1 active:scale-95 shadow-soft-sm"
       >
-        <form onSubmit={handleCreateTask} className="space-y-4">
-          <div>
-            <label className="text-xs font-bold text-slate-700 block mb-1">
-              Task Title <span className="text-rose-500">*</span>
-            </label>
-            <input
-              type="text"
-              required
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="E.g. Reserve train ticket to Lucknow"
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#1E60F2]"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-bold text-slate-700 block mb-1">
-              Supporting Note
-            </label>
-            <input
-              type="text"
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              placeholder="E.g. Charbagh station arrival by 10 AM"
-              className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#1E60F2]"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">
-                Due Timeline
-              </label>
-              <select
-                value={newDueLabel}
-                onChange={(e) => setNewDueLabel(e.target.value)}
-                className="w-full px-2.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800"
-              >
-                <option value="Today">Today</option>
-                <option value="Tomorrow">Tomorrow</option>
-                <option value="This Week">This Week</option>
-                <option value="Aug 20">Aug 20</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">
-                Priority
-              </label>
-              <select
-                value={newPriority}
-                onChange={(e) => setNewPriority(e.target.value as any)}
-                className="w-full px-2.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800"
-              >
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
-            </div>
-          </div>
-        </form>
-      </LifeOSModal>
-    </div>
+        {createMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={14} />}
+        <span>Add</span>
+      </button>
+    </form>
   );
-};
+}
+
+function FilterButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-semibold transition-all border',
+        active
+          ? 'bg-lifeos-navy text-white border-lifeos-navy shadow-soft-sm'
+          : 'bg-white text-lifeos-navy border-gray-200 hover:bg-gray-50'
+      )}
+    >
+      {label}
+    </button>
+  );
+}

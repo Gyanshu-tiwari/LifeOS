@@ -6,6 +6,7 @@ Implements narrow tools:
   - compute_route_matrix()
 """
 
+import re
 import time
 from typing import Any
 
@@ -18,6 +19,28 @@ from lifeos.core.logging import get_logger
 logger = get_logger(__name__)
 
 ROUTES_BASE_URL = "https://routes.googleapis.com"
+
+
+def _parse_waypoint(location_str: str) -> dict[str, Any]:
+    """Parse a waypoint string into Google Routes API format.
+
+    If location_str is a coordinate string like '28.6139, 77.2090' or '28.6139,77.2090',
+    converts it to:
+        {"location": {"latLng": {"latitude": lat, "longitude": lng}}}
+    Otherwise returns:
+        {"address": location_str}
+    """
+    cleaned = (location_str or "").strip()
+    match = re.match(r"^([-+]?\d{1,3}(?:\.\d+)?)\s*,\s*([-+]?\d{1,3}(?:\.\d+)?)$", cleaned)
+    if match:
+        try:
+            lat = float(match.group(1))
+            lng = float(match.group(2))
+            if -90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0:
+                return {"location": {"latLng": {"latitude": lat, "longitude": lng}}}
+        except ValueError:
+            pass
+    return {"address": cleaned}
 
 
 def _get_headers(field_mask: str) -> dict[str, str]:
@@ -54,8 +77,8 @@ async def compute_route(
             mode_upper = "WALK"
 
         payload = {
-            "origin": {"address": origin},
-            "destination": {"address": destination},
+            "origin": _parse_waypoint(origin),
+            "destination": _parse_waypoint(destination),
             "travelMode": mode_upper,
         }
 
@@ -136,8 +159,8 @@ async def compute_route_matrix(
             mode_upper = "WALK"
 
         payload = {
-            "origins": [{"waypoint": {"address": o}} for o in origins],
-            "destinations": [{"waypoint": {"address": d}} for d in destinations],
+            "origins": [{"waypoint": _parse_waypoint(o)} for o in origins],
+            "destinations": [{"waypoint": _parse_waypoint(d)} for d in destinations],
             "travelMode": mode_upper,
         }
 
